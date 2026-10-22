@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "manga-analyzer"
+version = "0.1.0"
+description = "漫画ページ画像を解析し、コマ・人物・セリフの座標と内容を JSON で出力する"
+requires-python = ">=3.10"
+dependencies = [
+    "anthropic>=2.1",
+    "pillow>=10.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+manga-analyze = "manga_analyzer.__main__:main"
+
+[tool.setuptools]
+packages = ["manga_analyzer"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
