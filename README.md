@@ -31,7 +31,15 @@ python -m manga_analyzer tests/fixtures/manga_page_01.jpg
 
 # 複数枚をまとめて解析し、out/<画像名>.json に保存
 python -m manga_analyzer tests/fixtures/*.jpg -o out/
+
+# 枠を元画像に描いた確認用画像（out/<画像名>_boxes.png）も出す
+python -m manga_analyzer tests/fixtures/*.jpg -o out/ --draw
+
+# 解析済みの JSON から確認用画像だけ作り直す（API は呼ばない）
+python -m manga_analyzer.draw out/*.json
 ```
+
+確認用画像の枠の色: コマ＝赤、登場人物＝青、テキスト＝緑。ラベルの ID（`p1`, `p1-c1`, `p1-t1` など）は JSON の `id` と対応しています。
 
 主なオプション: `--model`（既定 `claude-opus-5-5`）、`--effort`（既定 `high`）、`--language`（説明文の言語、既定 `Japanese`）。
 
@@ -79,7 +87,7 @@ pytest
 ├── README.md         # このファイル
 ├── CLAUDE.md         # 開発ルール
 ├── pyproject.toml
-├── manga_analyzer/   # 漫画ページ解析
+├── manga_analyzer/   # 漫画ページ解析（draw.py: 確認用画像）
 └── tests/
     ├── test_analyzer.py
     └── fixtures/     # テスト用画像の置き場所

@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from .analyzer import DEFAULT_EFFORT, DEFAULT_MODEL, AnalysisError, analyze_page
+from .draw import boxes_path_for, draw_boxes
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -23,8 +24,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--effort", default=DEFAULT_EFFORT, choices=["low", "medium", "high", "xhigh", "max"])
     parser.add_argument("--language", default="Japanese", help="説明文の言語（既定: Japanese）")
+    parser.add_argument(
+        "--draw", action="store_true",
+        help="枠を元画像に描いた確認用画像 <画像名>_boxes.png も出力する（--out-dir が必要）",
+    )
     args = parser.parse_args(argv)
 
+    if args.draw and not args.out_dir:
+        parser.error("--draw には --out-dir が必要です")
     if args.out_dir:
         args.out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -41,6 +48,9 @@ def main(argv: list[str] | None = None) -> int:
             out = args.out_dir / f"{image.stem}.json"
             out.write_text(text + "\n", encoding="utf-8")
             print(f"wrote {out}", file=sys.stderr)
+            if args.draw:
+                boxes = draw_boxes(result, image, boxes_path_for(out))
+                print(f"wrote {boxes}", file=sys.stderr)
         else:
             print(text)
     return status

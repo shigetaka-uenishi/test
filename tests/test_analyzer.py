@@ -164,3 +164,36 @@ def test_cli_writes_json(tmp_path, monkeypatch):
 
     data = json.loads((tmp_path / "manga_page_01.json").read_text(encoding="utf-8"))
     assert data["panels"][0]["texts"][0]["content"] == "俺は シゲオ\n日本人だ"
+
+
+def test_draw_boxes_writes_png(tmp_path):
+    from PIL import Image
+
+    from manga_analyzer.analyzer import build_result
+    from manga_analyzer.draw import draw_boxes
+
+    result = build_result(MODEL_OUTPUT, source=PAGE_1.as_posix(), width=1419, height=2000, model="m")
+    out = draw_boxes(result, PAGE_1, tmp_path / "boxes.png")
+
+    with Image.open(out) as img:
+        assert img.size == (1419, 2000)
+        # p1 の枠の左上（赤い線）に色が塗られている
+        x, y = result["panels"][0]["bbox"]["x"], result["panels"][0]["bbox"]["y"]
+        assert img.getpixel((x + 1, y + 1)) == (230, 40, 40)
+
+
+def test_draw_cli_from_json(tmp_path):
+    from manga_analyzer.analyzer import build_result
+    from manga_analyzer.draw import main as draw_main
+
+    result = build_result(MODEL_OUTPUT, source=PAGE_1.as_posix(), width=1419, height=2000, model="m")
+    json_path = tmp_path / "manga_page_01.json"
+    json_path.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
+
+    assert draw_main([str(json_path)]) == 0
+    assert (tmp_path / "manga_page_01_boxes.png").exists()
+
+
+def test_cli_draw_requires_out_dir():
+    with pytest.raises(SystemExit):
+        main([str(PAGE_1), "--draw"])

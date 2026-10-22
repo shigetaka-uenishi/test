@@ -9,7 +9,7 @@ description = "漫画ページ画像を解析し、コマ・人物・セリフ�
 requires-python = ">=3.10"
 dependencies = [
     "anthropic>=2.1",
-    "pillow>=10",
+    "pillow>=10.1",
 ]
 
 [project.optional-dependencies]
