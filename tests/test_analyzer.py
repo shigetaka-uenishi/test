@@ -146,6 +146,8 @@ def test_analyze_page_sends_image_and_schema():
     # 上限以内の画像はそのまま送り、そのピクセルサイズを伝える
     assert base64.standard_b64decode(image_block["source"]["data"]) == PAGE_1.read_bytes()
     assert "1419x2000 pixels" in call["system"]
+    # 吹き出し・ナレーション枠の中の文字は、入れ物ごと囲ませる
+    assert "box the whole balloon or box along its outline" in call["system"]
 
 
 def test_large_image_is_downscaled_and_coords_scaled_back(tmp_path):

@@ -38,6 +38,10 @@ For every panel on the page, report:
 Coordinates: the image is {width}x{height} pixels. Give every box as integer pixel coordinates, \
 where (0, 0) is the top-left corner of the page and ({width}, {height}) the bottom-right. \
 Box edges should hug the visible element.
+For text, the element is its container when it has one: if the text sits inside a speech balloon, \
+thought balloon or narration box, box the whole balloon or box along its outline (excluding the tail), \
+not just the characters. Text without a container (sound effects, text drawn directly on the art) \
+is boxed tightly around the characters.
 
 If a text element or character overlaps two panels, assign it to the panel where most of it lies.
 Japanese manga is usually read right-to-left; decide the direction from the page itself.
