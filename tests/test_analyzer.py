@@ -1,3 +1,5 @@
+import base64
+import io
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,7 +13,7 @@ from manga_analyzer.schema import MODEL_OUTPUT_SCHEMA
 FIXTURES = Path(__file__).parent / "fixtures"
 PAGE_1 = FIXTURES / "manga_page_01.jpg"
 
-# manga_page_01.jpg 1 コマ目を想定したモデル出力（正規化座標）。
+# manga_page_01.jpg 1 コマ目を想定したモデル出力（ピクセル座標）。
 # reading_order をわざと逆順に並べ、並べ替えを確認する。
 MODEL_OUTPUT = {
     "summary": "日本人のシゲオが南米に到着する。",
@@ -19,7 +21,7 @@ MODEL_OUTPUT = {
     "panels": [
         {
             "reading_order": 2,
-            "box": {"x_min": 90, "y_min": 480, "x_max": 910, "y_max": 710},
+            "box": {"x_min": 128, "y_min": 960, "x_max": 1291, "y_max": 1420},
             "description": "現地の人々が笑顔で迎える。",
             "characters": [],
             "texts": [
@@ -27,20 +29,20 @@ MODEL_OUTPUT = {
                     "type": "narration",
                     "content": "なんとかやっていけそうだ",
                     "speaker": "",
-                    "box": {"x_min": 650, "y_min": 545, "x_max": 945, "y_max": 640},
+                    "box": {"x_min": 922, "y_min": 1090, "x_max": 1341, "y_max": 1280},
                 }
             ],
         },
         {
             "reading_order": 1,
-            "box": {"x_min": 90, "y_min": 63, "x_max": 910, "y_max": 469},
+            "box": {"x_min": 128, "y_min": 126, "x_max": 1291, "y_max": 938},
             "description": "空港でリュックを背負ったシゲオ。",
             "characters": [
                 {
                     "name": "シゲオ",
                     "description": "眼鏡の日本人男性",
                     "expression": "笑顔",
-                    "box": {"x_min": 450, "y_min": 80, "x_max": 870, "y_max": 469},
+                    "box": {"x_min": 639, "y_min": 160, "x_max": 1235, "y_max": 938},
                 }
             ],
             "texts": [
@@ -48,7 +50,7 @@ MODEL_OUTPUT = {
                     "type": "narration",
                     "content": "俺は シゲオ\n日本人だ",
                     "speaker": "シゲオ",
-                    "box": {"x_min": 180, "y_min": 97, "x_max": 495, "y_max": 213},
+                    "box": {"x_min": 255, "y_min": 194, "x_max": 702, "y_max": 426},
                 }
             ],
         },
@@ -97,14 +99,19 @@ def test_fixtures_exist():
     assert names == ["manga_page_01.jpg", "manga_page_02.jpg", "manga_page_03.jpg"]
 
 
-def test_to_pixel_bbox_scales_to_image_size():
-    box = {"x_min": 0, "y_min": 500, "x_max": 1000, "y_max": 1000}
+def test_to_pixel_bbox_keeps_pixels():
+    box = {"x_min": 0, "y_min": 1000, "x_max": 1419, "y_max": 2000}
     assert to_pixel_bbox(box, 1419, 2000) == {"x": 0, "y": 1000, "width": 1419, "height": 1000}
 
 
 def test_to_pixel_bbox_clamps_and_swaps():
     box = {"x_min": 1200, "y_min": 600, "x_max": -50, "y_max": 400}
     assert to_pixel_bbox(box, 1000, 1000) == {"x": 0, "y": 400, "width": 1000, "height": 200}
+
+
+def test_to_pixel_bbox_scales_back_when_resized():
+    box = {"x_min": 100, "y_min": 200, "x_max": 300, "y_max": 400}
+    assert to_pixel_bbox(box, 4000, 4000, scale=2.0) == {"x": 200, "y": 400, "width": 400, "height": 400}
 
 
 def test_analyze_page_builds_pixel_json():
@@ -136,6 +143,41 @@ def test_analyze_page_sends_image_and_schema():
     assert call["fallbacks"] == "default"
     image_block = call["messages"][0]["content"][0]
     assert image_block["source"]["media_type"] == "image/jpeg"
+    # 上限以内の画像はそのまま送り、そのピクセルサイズを伝える
+    assert base64.standard_b64decode(image_block["source"]["data"]) == PAGE_1.read_bytes()
+    assert "1419x2000 pixels" in call["system"]
+
+
+def test_large_image_is_downscaled_and_coords_scaled_back(tmp_path):
+    from PIL import Image
+
+    big = tmp_path / "big.png"
+    Image.new("RGB", (4000, 3000), "white").save(big)
+    output = {
+        "summary": "s",
+        "reading_direction": "right_to_left",
+        "panels": [
+            {
+                "reading_order": 1,
+                "box": {"x_min": 0, "y_min": 0, "x_max": 1000, "y_max": 500},
+                "description": "d",
+                "characters": [],
+                "texts": [],
+            }
+        ],
+    }
+    client = FakeClient(make_message(json.dumps(output)))
+    result = analyze_page(big, client=client)
+
+    (call,) = client.calls
+    sent = Image.open(io.BytesIO(base64.standard_b64decode(call["messages"][0]["content"][0]["source"]["data"])))
+    w, h = sent.size
+    assert max(w, h) <= 2576 and w * h <= 3_750_000
+    assert f"{w}x{h} pixels" in call["system"]
+    # 送った画像での座標が、元画像（4000x3000）の座標に戻っている
+    scale = 4000 / w
+    assert result["source"]["width"] == 4000
+    assert result["panels"][0]["bbox"] == {"x": 0, "y": 0, "width": round(1000 * scale), "height": round(500 * scale)}
 
 
 def test_refusal_raises():

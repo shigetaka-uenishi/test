@@ -3,17 +3,24 @@
 from __future__ import annotations
 
 import base64
+import io
 import json
+import math
 from pathlib import Path
 from typing import Any
 
 from PIL import Image
 
-from .schema import MODEL_OUTPUT_SCHEMA, NORMALIZED_SCALE
+from .schema import MODEL_OUTPUT_SCHEMA
 
 DEFAULT_MODEL = "claude-opus-5-5"
 DEFAULT_EFFORT = "high"
 MAX_TOKENS = 64000
+
+# API がこれを超える画像を縮小すると、モデルの答えるピクセル座標が元画像とずれる。
+# 超える画像はこちらで縮小して送り、座標を元の大きさに戻す。
+MAX_LONG_EDGE = 2576
+MAX_PIXELS = 3_750_000
 
 _MEDIA_TYPES = {"JPEG": "image/jpeg", "PNG": "image/png", "GIF": "image/gif", "WEBP": "image/webp"}
 
@@ -28,8 +35,8 @@ For every panel on the page, report:
 - every piece of text (narration boxes, speech balloons, thought balloons, sound effects),
   transcribed verbatim in the original language, with its bounding box and speaker.
 
-Coordinates: give every box as integers normalized to 0-{scale} on both axes, \
-where (0, 0) is the top-left corner of the page and ({scale}, {scale}) the bottom-right. \
+Coordinates: the image is {width}x{height} pixels. Give every box as integer pixel coordinates, \
+where (0, 0) is the top-left corner of the page and ({width}, {height}) the bottom-right. \
 Box edges should hug the visible element.
 
 If a text element or character overlaps two panels, assign it to the panel where most of it lies.
@@ -42,35 +49,51 @@ class AnalysisError(RuntimeError):
     """モデルが結果を返せなかったとき（拒否・出力上限など）に送出する。"""
 
 
-def _encode_image(path: Path) -> tuple[str, str, int, int]:
+def _sent_size(width: int, height: int) -> tuple[int, int]:
+    """API の上限に収まる送信サイズ。上限以内ならそのまま。"""
+    scale = min(1.0, MAX_LONG_EDGE / max(width, height), math.sqrt(MAX_PIXELS / (width * height)))
+    if scale == 1.0:
+        return width, height
+    return max(1, math.floor(width * scale)), max(1, math.floor(height * scale))
+
+
+def _encode_image(path: Path) -> tuple[str, str, int, int, int, int]:
+    """(media_type, base64, 元の幅, 元の高さ, 送る幅, 送る高さ) を返す。"""
     with Image.open(path) as img:
         media_type = _MEDIA_TYPES.get(img.format or "")
         if media_type is None:
             raise ValueError(f"unsupported image format: {img.format} ({path})")
         width, height = img.size
-    data = base64.standard_b64encode(path.read_bytes()).decode("ascii")
-    return media_type, data, width, height
+        sent_w, sent_h = _sent_size(width, height)
+        if (sent_w, sent_h) == (width, height):
+            raw = path.read_bytes()
+        else:
+            buf = io.BytesIO()
+            img.convert("RGB").resize((sent_w, sent_h), Image.LANCZOS).save(buf, format="PNG")
+            raw, media_type = buf.getvalue(), "image/png"
+    data = base64.standard_b64encode(raw).decode("ascii")
+    return media_type, data, width, height, sent_w, sent_h
 
 
-def to_pixel_bbox(box: dict[str, int], width: int, height: int) -> dict[str, int]:
-    """0〜1000 の正規化ボックスを、元画像のピクセル座標 {x, y, width, height} に変換する。"""
+def to_pixel_bbox(box: dict[str, int], width: int, height: int, scale: float = 1.0) -> dict[str, int]:
+    """モデルが答えたピクセルボックスを、元画像のピクセル座標 {x, y, width, height} にする。
 
-    def clamp(v: int) -> int:
-        return max(0, min(NORMALIZED_SCALE, int(v)))
+    scale は送った画像から元画像への倍率（縮小して送ったときだけ 1 より大きい）。
+    範囲外の値は画像の端に収め、min と max が逆なら入れ替える。
+    """
 
-    x0, x1 = sorted((clamp(box["x_min"]), clamp(box["x_max"])))
-    y0, y1 = sorted((clamp(box["y_min"]), clamp(box["y_max"])))
-    px0 = round(x0 * width / NORMALIZED_SCALE)
-    py0 = round(y0 * height / NORMALIZED_SCALE)
-    px1 = round(x1 * width / NORMALIZED_SCALE)
-    py1 = round(y1 * height / NORMALIZED_SCALE)
-    return {"x": px0, "y": py0, "width": px1 - px0, "height": py1 - py0}
+    def to_original(v: int, limit: int) -> int:
+        return max(0, min(limit, round(v * scale)))
+
+    x0, x1 = sorted((to_original(box["x_min"], width), to_original(box["x_max"], width)))
+    y0, y1 = sorted((to_original(box["y_min"], height), to_original(box["y_max"], height)))
+    return {"x": x0, "y": y0, "width": x1 - x0, "height": y1 - y0}
 
 
 def build_result(
-    model_output: dict[str, Any], *, source: str, width: int, height: int, model: str
+    model_output: dict[str, Any], *, source: str, width: int, height: int, model: str, scale: float = 1.0
 ) -> dict[str, Any]:
-    """モデル出力（正規化座標）を、ピクセル座標の最終 JSON に組み立てる。"""
+    """モデル出力（送った画像のピクセル座標）を、元画像のピクセル座標の最終 JSON に組み立てる。"""
     panels = sorted(model_output["panels"], key=lambda p: p["reading_order"])
     out_panels = []
     for i, panel in enumerate(panels, start=1):
@@ -79,14 +102,14 @@ def build_result(
             {
                 "id": panel_id,
                 "reading_order": i,
-                "bbox": to_pixel_bbox(panel["box"], width, height),
+                "bbox": to_pixel_bbox(panel["box"], width, height, scale),
                 "description": panel["description"],
                 "characters": [
                     {
                         "name": c["name"],
                         "description": c["description"],
                         "expression": c["expression"],
-                        "bbox": to_pixel_bbox(c["box"], width, height),
+                        "bbox": to_pixel_bbox(c["box"], width, height, scale),
                     }
                     for c in panel["characters"]
                 ],
@@ -96,7 +119,7 @@ def build_result(
                         "type": t["type"],
                         "content": t["content"],
                         "speaker": t["speaker"] or None,
-                        "bbox": to_pixel_bbox(t["box"], width, height),
+                        "bbox": to_pixel_bbox(t["box"], width, height, scale),
                     }
                     for j, t in enumerate(panel["texts"], start=1)
                 ],
@@ -124,7 +147,7 @@ def analyze_page(
 ) -> dict[str, Any]:
     """画像 1 枚を解析し、座標と内容の解釈をまとめた dict を返す。"""
     path = Path(image_path)
-    media_type, data, width, height = _encode_image(path)
+    media_type, data, width, height, sent_w, sent_h = _encode_image(path)
 
     if client is None:
         import anthropic
@@ -141,7 +164,7 @@ def analyze_page(
             "effort": effort,
             "format": {"type": "json_schema", "schema": MODEL_OUTPUT_SCHEMA},
         },
-        system=SYSTEM_PROMPT.format(scale=NORMALIZED_SCALE, language=language),
+        system=SYSTEM_PROMPT.format(width=sent_w, height=sent_h, language=language),
         messages=[
             {
                 "role": "user",
@@ -166,5 +189,10 @@ def analyze_page(
         raise AnalysisError(f"no text output for {path} (stop_reason: {response.stop_reason})")
 
     return build_result(
-        json.loads(text), source=path.as_posix(), width=width, height=height, model=response.model
+        json.loads(text),
+        source=path.as_posix(),
+        width=width,
+        height=height,
+        model=response.model,
+        scale=width / sent_w,
     )
