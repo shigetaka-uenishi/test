@@ -1,15 +1,14 @@
 """Claude に返させる JSON の形（structured outputs 用の JSON Schema）。
 
-座標はモデルに 0〜1000 の正規化値で答えさせ、analyzer 側で元画像の
-ピクセル座標に変換する。モデルに渡る画像は API 側で縮小されることがあり、
-ピクセル値を直接答えさせると縮小後の座標系とずれるため。
+座標はモデルに、送った画像のピクセル値で答えさせる。高解像度対応のモデルは、
+API の上限（長辺 2576px・約 3.75MP）以内の画像なら縮小せずに見て、
+ピクセルと 1:1 で座標を返す。上限を超える画像は analyzer 側で縮小して送り、
+座標を元の大きさに戻す（定規実験 #8 で、正規化より誤差が小さいことを確認済み）。
 """
-
-NORMALIZED_SCALE = 1000
 
 _BOX = {
     "type": "object",
-    "description": "Bounding box, normalized to 0-1000 on both axes (origin top-left).",
+    "description": "Bounding box in pixels of the given image (origin top-left).",
     "properties": {
         "x_min": {"type": "integer"},
         "y_min": {"type": "integer"},
