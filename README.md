@@ -43,6 +43,9 @@ python -m manga_analyzer.rebuild out/*.vlm.json
 
 # 最終 JSON から、確認用画像だけ作り直す（API は呼ばない）
 python -m manga_analyzer.draw out/manga_page_01.json
+
+# 最終 JSON の不明の人物から、キャラシートと切り出し画像を作る（API は呼ばない）
+python -m manga_analyzer.sheet out/manga_page_01.json -o sheets/ --ledger tests/fixtures/ledger_shigeo.json
 ```
 
 `-o` を付けると、1 枚の画像につき 2 つのファイルができます。
@@ -127,6 +130,37 @@ python -m manga_analyzer.draw out/manga_page_01.json
 - `notes` は、キャラ台帳を整理する人（またはエージェント）への申し送り事項です。不明の人物について、名前・役割・同じ人物かもしれない、など重要なことに気づいたときだけ、自由記述で短く書かれます。人物は確定した `id` で書かれます。台帳への記入はしません。
 - 座標はモデルの推定値のため、数％程度のずれが出ることがあります。
 
+### キャラシート
+
+最終 JSON で `status: "unknown"` の人物（台帳にいない＝新しく見つかった人物）ごとに、キャラシートと、その人物を元画像から切り出した画像を作ります（#24）。台帳に載せて次のページを解析すれば、同じ人物を「既知」と判定できるようにするためです。
+
+| ファイル | 中身 |
+|---|---|
+| `sheets/<id>.json` | キャラシート |
+| `sheets/<id>/<登場の id>.png` | 登場（`panels[].characters[]`）の枠で切り出した画像 |
+
+```json
+{
+  "id": "unk-001",
+  "name": null,
+  "role": null,
+  "appearance": "しま模様の服の巻き毛の男性",
+  "source": {"result": "out/manga_page_01.json", "image": "tests/fixtures/manga_page_01.jpg", "person": "c2"},
+  "appearances": [
+    {"id": "p2-c2", "panel": "p2", "description": "…", "expression": "笑顔", "bbox": {"x": 400, "y": 980, "width": 300, "height": 420}, "image": "unk-001/p2-c2.png"}
+  ],
+  "lines": [{"id": "p2-t1", "type": "speech", "content": "…"}],
+  "notes": ["unk-001の名前はカルロスらしい（shigeoが呼んでいる）"],
+  "image": "unk-001/p2-c2.png"
+}
+```
+
+- 先頭の `id`・`name`・`role`・`appearance` は台帳の 1 人分と同じ形で、そのまま台帳に貼れます。台帳への記入は自動ではしません（#21）。
+- `id` は `unk-001`, `unk-002`, … で、`--ledger` の台帳と出力先にあるシートの `id` とは重ならない番号を振ります。
+- `name`・`role` はコードでは決められないので `null` です。`notes`（その人物に触れた申し送り事項）や `lines`（その人物が話し手のテキスト）を見て、人が埋めます。
+- `image` は代表の画像で、いちばん大きく写っている登場です。画像のパスは出力先からの相対パスです。
+- 同じページの同じ人物は、作り直しても同じ `id` のシートに上書きされます。別のページの同じ人物は別のシートになります（まとめ直しは #21）。
+
 ### テスト
 
 ```bash
@@ -142,9 +176,10 @@ pytest
 ├── README.md         # このファイル
 ├── CLAUDE.md         # 開発ルール
 ├── pyproject.toml
-├── manga_analyzer/   # 漫画ページ解析（draw.py: 確認用画像）
+├── manga_analyzer/   # 漫画ページ解析（draw.py: 確認用画像、sheet.py: キャラシート）
 └── tests/
     ├── test_analyzer.py
+    ├── test_sheet.py
     └── fixtures/     # テスト用画像の置き場所
 ```
 
