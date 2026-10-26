@@ -37,11 +37,29 @@ python -m manga_analyzer tests/fixtures/*.jpg -o out/ --draw
 
 # 解析済みの JSON から確認用画像だけ作り直す（API は呼ばない）
 python -m manga_analyzer.draw out/*.json
+
+# キャラ台帳と、前のページまでのあらすじを踏まえて解析する
+python -m manga_analyzer tests/fixtures/manga_page_02.jpg -o out/ --ledger tests/fixtures/ledger_shigeo.json --synopsis synopsis.txt
 ```
 
-確認用画像の枠の色: コマ＝赤、登場人物＝青、テキスト＝緑。ラベルの ID（`p1`, `p1-c1`, `p1-t1` など）は JSON の `id` と対応しています。
+確認用画像の枠の色: コマ＝赤、登場人物＝青、テキスト＝緑。ラベルの ID（`p1`, `p1-c1`, `p1-t1` など）は JSON の `id` と対応しています。登場人物のラベルには、どの人物か（台帳の `id`、または不明の `u1` など）も付きます。
 
-主なオプション: `--model`（既定 `claude-opus-5-5`）、`--effort`（既定 `high`）、`--language`（説明文の言語、既定 `Japanese`）。
+主なオプション: `--model`（既定 `claude-opus-5-5`）、`--effort`（既定 `high`）、`--language`（説明文の言語、既定 `Japanese`）、`--ledger`（キャラ台帳の JSON。省略時は空の台帳）、`--synopsis`（前のページまでのあらすじのテキストファイル）。
+
+### キャラ台帳
+
+作品をまたいで持つ人物の一覧です。今は人が手で書きます（解析結果から台帳への記入は、まだ作っていません。#21）。
+
+```json
+{
+  "characters": [
+    {"id": "shigeo", "name": "シゲオ", "role": "主人公・語り手", "appearance": "黒髪の短髪、眼鏡、口ひげとあごひげ…"}
+  ]
+}
+```
+
+- `id` だけ必須です。`name`・`role`・`appearance` は省略できます（名前のない人物も載せられます）。
+- `id` は、確認用画像のラベルに描けるよう英数字にしてください。`u1`, `u2`, … は台帳にいない人物用なので使えません。
 
 ### 出力 JSON
 
@@ -51,6 +69,10 @@ python -m manga_analyzer.draw out/*.json
   "model": "claude-opus-5-5",
   "coordinate_system": "pixels, origin top-left, bbox = {x, y, width, height}",
   "page": {"summary": "…", "reading_direction": "right_to_left"},
+  "persons": [
+    {"id": "shigeo", "status": "known", "name": "シゲオ", "appearance": "…", "match_evidence": "…"},
+    {"id": "u1", "status": "unknown", "name": null, "appearance": "…", "match_evidence": null}
+  ],
   "panels": [
     {
       "id": "p1",
@@ -58,18 +80,26 @@ python -m manga_analyzer.draw out/*.json
       "bbox": {"x": 128, "y": 126, "width": 1163, "height": 812},
       "description": "…",
       "characters": [
-        {"name": "シゲオ", "description": "…", "expression": "笑顔", "bbox": {"x": 0, "y": 0, "width": 0, "height": 0}}
+        {"id": "p1-c1", "person": "shigeo", "description": "…", "expression": "笑顔", "bbox": {"x": 0, "y": 0, "width": 0, "height": 0}}
       ],
       "texts": [
-        {"id": "p1-t1", "type": "narration", "content": "俺は シゲオ\n日本人だ", "speaker": null, "bbox": {"x": 0, "y": 0, "width": 0, "height": 0}}
+        {"id": "p1-t1", "type": "narration", "content": "俺は シゲオ\n日本人だ", "speaker": "shigeo", "bbox": {"x": 0, "y": 0, "width": 0, "height": 0}}
       ]
     }
+  ],
+  "discoveries": [
+    {"subject": "u1", "kind": "name", "content": "…", "evidence": "…"}
   ]
 }
 ```
 
 - 座標は元画像のピクセル単位（左上が原点）です。
 - `texts[].type` は `narration` / `speech` / `thought` / `sound_effect` / `other` のいずれかです。
+- `persons` はページに出てくる人物そのもの、`panels[].characters` はコマへの登場（枠 1 つ）です。登場は `person` で人物を指します。
+  - 台帳の人物と一致したら `status: "known"` で、`id` は台帳の `id` です。
+  - 台帳にいない人物は `status: "unknown"` で、`id` はそのページの中だけで有効な `u1`, `u2`, … です。同じページで何度登場しても同じ `id` です。
+- `texts[].speaker` は、話し手（ナレーションなら語り手）の人物の `id` です。分からなければ `null` です。
+- `discoveries` は、そのページで新しく分かったこと（`kind`: `name` / `role` / `speech_style` / `relationship` / `appearance` / `possibly_same_person` / `other`）です。`subject` はその人物の `id`、`possibly_same_person` の `content` は同じ人物かもしれない相手の `id` です。台帳への記入はしません。
 - 座標はモデルの推定値のため、数％程度のずれが出ることがあります。
 
 ### テスト

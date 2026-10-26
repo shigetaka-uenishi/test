@@ -1,4 +1,4 @@
-"""コマンドライン: python -m manga_analyzer IMAGE [IMAGE ...] [-o OUT_DIR]"""
+"""コマンドライン: python -m manga_analyzer IMAGE [IMAGE ...] [-o OUT_DIR] [--ledger L] [--synopsis S]"""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from pathlib import Path
 
 from .analyzer import DEFAULT_EFFORT, DEFAULT_MODEL, AnalysisError, analyze_page
 from .draw import boxes_path_for, draw_boxes
+from .ledger import load_ledger
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -28,17 +29,31 @@ def main(argv: list[str] | None = None) -> int:
         "--draw", action="store_true",
         help="枠を元画像に描いた確認用画像 <画像名>_boxes.png も出力する（--out-dir が必要）",
     )
+    parser.add_argument("--ledger", type=Path, help="キャラ台帳の JSON。省略時は空の台帳")
+    parser.add_argument("--synopsis", type=Path, help="前のページまでのあらすじ（テキストファイル）")
     args = parser.parse_args(argv)
 
     if args.draw and not args.out_dir:
         parser.error("--draw には --out-dir が必要です")
+    try:
+        ledger = load_ledger(args.ledger) if args.ledger else None
+    except (OSError, ValueError) as e:
+        parser.error(f"台帳を読めません: {e}")
+    synopsis = args.synopsis.read_text(encoding="utf-8") if args.synopsis else None
     if args.out_dir:
         args.out_dir.mkdir(parents=True, exist_ok=True)
 
     status = 0
     for image in args.images:
         try:
-            result = analyze_page(image, model=args.model, effort=args.effort, language=args.language)
+            result = analyze_page(
+                image,
+                model=args.model,
+                effort=args.effort,
+                language=args.language,
+                ledger=ledger,
+                synopsis=synopsis,
+            )
         except AnalysisError as e:
             print(f"error: {e}", file=sys.stderr)
             status = 1

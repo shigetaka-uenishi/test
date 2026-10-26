@@ -4,7 +4,15 @@
 API の上限（長辺 2576px・約 3.75MP）以内の画像なら縮小せずに見て、
 ピクセルと 1:1 で座標を返す。上限を超える画像は analyzer 側で縮小して送り、
 座標を元の大きさに戻す（定規実験 #8 で、正規化より誤差が小さいことを確認済み）。
+
+人物は、モデルにはページ内の参照（P1, P2, ...）で答えさせる。台帳の人物と一致したときは
+ledger_id に台帳の id を書かせる（台帳にある id 以外は選べないよう enum で縛る）。
+出力 JSON の id（既知なら台帳の id、不明なら u1, u2, ...）への付け替えは analyzer が行う。
 """
+
+from __future__ import annotations
+
+from typing import Any
 
 _BOX = {
     "type": "object",
@@ -21,13 +29,14 @@ _BOX = {
 
 _CHARACTER = {
     "type": "object",
+    "description": "One appearance of a person in this panel.",
     "properties": {
-        "name": {"type": "string", "description": "Name if known from the page, otherwise a short label."},
-        "description": {"type": "string"},
+        "person_ref": {"type": "string", "description": "The ref of the person in `persons`."},
+        "description": {"type": "string", "description": "What the person is doing in this panel."},
         "expression": {"type": "string"},
         "box": _BOX,
     },
-    "required": ["name", "description", "expression", "box"],
+    "required": ["person_ref", "description", "expression", "box"],
     "additionalProperties": False,
 }
 
@@ -38,10 +47,13 @@ _TEXT = {
     "properties": {
         "type": {"type": "string", "enum": TEXT_TYPES},
         "content": {"type": "string", "description": "Verbatim transcription in the original language."},
-        "speaker": {"type": "string", "description": "Speaker name, or empty string if none/unknown."},
+        "speaker_ref": {
+            "type": "string",
+            "description": "The ref of the person who speaks or narrates it, or empty string if none/unknown.",
+        },
         "box": _BOX,
     },
-    "required": ["type", "content", "speaker", "box"],
+    "required": ["type", "content", "speaker_ref", "box"],
     "additionalProperties": False,
 }
 
@@ -58,13 +70,53 @@ _PANEL = {
     "additionalProperties": False,
 }
 
-MODEL_OUTPUT_SCHEMA = {
+DISCOVERY_KINDS = ["name", "role", "speech_style", "relationship", "appearance", "possibly_same_person", "other"]
+
+_DISCOVERY = {
     "type": "object",
     "properties": {
-        "summary": {"type": "string"},
-        "reading_direction": {"type": "string", "enum": ["right_to_left", "left_to_right"]},
-        "panels": {"type": "array", "items": _PANEL},
+        "subject_ref": {"type": "string", "description": "The ref of the person this is about."},
+        "kind": {"type": "string", "enum": DISCOVERY_KINDS},
+        "content": {
+            "type": "string",
+            "description": "What was found. For possibly_same_person, the ref of the other person.",
+        },
+        "evidence": {"type": "string", "description": "A quoted text from the page, or what is drawn."},
     },
-    "required": ["summary", "reading_direction", "panels"],
+    "required": ["subject_ref", "kind", "content", "evidence"],
     "additionalProperties": False,
 }
+
+
+def model_output_schema(ledger_ids: list[str]) -> dict[str, Any]:
+    """台帳の id を ledger_id の選択肢にしたスキーマを返す（"" は台帳にいない＝不明）。"""
+    person = {
+        "type": "object",
+        "properties": {
+            "ref": {"type": "string", "description": "Page-local reference: P1, P2, ..."},
+            "ledger_id": {
+                "type": "string",
+                "enum": ["", *ledger_ids],
+                "description": "The matching ledger entry, or empty string if not in the ledger or unsure.",
+            },
+            "appearance": {"type": "string"},
+            "match_evidence": {
+                "type": "string",
+                "description": "Why this is the ledger entry. Empty string when ledger_id is empty.",
+            },
+        },
+        "required": ["ref", "ledger_id", "appearance", "match_evidence"],
+        "additionalProperties": False,
+    }
+    return {
+        "type": "object",
+        "properties": {
+            "summary": {"type": "string"},
+            "reading_direction": {"type": "string", "enum": ["right_to_left", "left_to_right"]},
+            "persons": {"type": "array", "items": person},
+            "panels": {"type": "array", "items": _PANEL},
+            "discoveries": {"type": "array", "items": _DISCOVERY},
+        },
+        "required": ["summary", "reading_direction", "persons", "panels", "discoveries"],
+        "additionalProperties": False,
+    }
