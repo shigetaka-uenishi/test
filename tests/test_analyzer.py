@@ -67,10 +67,7 @@ MODEL_OUTPUT = {
             ],
         },
     ],
-    "discoveries": [
-        {"subject_ref": "P1", "kind": "relationship", "content": "南米に来た", "evidence": "空港の場面"},
-        {"subject_ref": "P2", "kind": "possibly_same_person", "content": "P1", "evidence": "確信なし"},
-    ],
+    "notes": ["P2の名前はカルロスらしい（P1が呼んでいる）", "P12 という参照はない"],
 }
 
 LEDGER = json.loads((FIXTURES / "ledger_shigeo.json").read_text(encoding="utf-8"))
@@ -163,11 +160,8 @@ def test_persons_are_resolved_against_ledger():
     # 話し手も人物の id で指す
     assert first["texts"][0]["speaker"] == "shigeo"
     assert second["texts"][0]["speaker"] == "shigeo"
-    # 発見の対象と、同一人物の候補の相手も、出力の id に直る
-    assert result["discoveries"] == [
-        {"subject": "shigeo", "kind": "relationship", "content": "南米に来た", "evidence": "空港の場面"},
-        {"subject": "u1", "kind": "possibly_same_person", "content": "shigeo", "evidence": "確信なし"},
-    ]
+    # 申し送り事項の中の参照も、出力の id に直る（日本語に続く参照も拾い、存在しない参照はそのまま）
+    assert result["notes"] == ["u1の名前はカルロスらしい（shigeoが呼んでいる）", "P12 という参照はない"]
 
 
 def test_without_ledger_everyone_is_unknown():
@@ -221,7 +215,7 @@ def test_large_image_is_downscaled_and_coords_scaled_back(tmp_path):
         "summary": "s",
         "reading_direction": "right_to_left",
         "persons": [],
-        "discoveries": [],
+        "notes": [],
         "panels": [
             {
                 "reading_order": 1,

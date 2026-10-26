@@ -70,24 +70,6 @@ _PANEL = {
     "additionalProperties": False,
 }
 
-DISCOVERY_KINDS = ["name", "role", "speech_style", "relationship", "appearance", "possibly_same_person", "other"]
-
-_DISCOVERY = {
-    "type": "object",
-    "properties": {
-        "subject_ref": {"type": "string", "description": "The ref of the person this is about."},
-        "kind": {"type": "string", "enum": DISCOVERY_KINDS},
-        "content": {
-            "type": "string",
-            "description": "What was found. For possibly_same_person, the ref of the other person.",
-        },
-        "evidence": {"type": "string", "description": "A quoted text from the page, or what is drawn."},
-    },
-    "required": ["subject_ref", "kind", "content", "evidence"],
-    "additionalProperties": False,
-}
-
-
 def model_output_schema(ledger_ids: list[str]) -> dict[str, Any]:
     """台帳の id を ledger_id の選択肢にしたスキーマを返す（"" は台帳にいない＝不明）。"""
     person = {
@@ -115,8 +97,12 @@ def model_output_schema(ledger_ids: list[str]) -> dict[str, Any]:
             "reading_direction": {"type": "string", "enum": ["right_to_left", "left_to_right"]},
             "persons": {"type": "array", "items": person},
             "panels": {"type": "array", "items": _PANEL},
-            "discoveries": {"type": "array", "items": _DISCOVERY},
+            "notes": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Short handover notes about unknown persons, referring to them by ref (P1, ...).",
+            },
         },
-        "required": ["summary", "reading_direction", "persons", "panels", "discoveries"],
+        "required": ["summary", "reading_direction", "persons", "panels", "notes"],
         "additionalProperties": False,
     }

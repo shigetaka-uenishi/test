@@ -87,9 +87,7 @@ python -m manga_analyzer tests/fixtures/manga_page_02.jpg -o out/ --ledger tests
       ]
     }
   ],
-  "discoveries": [
-    {"subject": "u1", "kind": "name", "content": "…", "evidence": "…"}
-  ]
+  "notes": ["u1 の名前はシゲオ（「俺は シゲオ 日本人だ」）"]
 }
 ```
 
@@ -99,7 +97,7 @@ python -m manga_analyzer tests/fixtures/manga_page_02.jpg -o out/ --ledger tests
   - 台帳の人物と一致したら `status: "known"` で、`id` は台帳の `id` です。
   - 台帳にいない人物は `status: "unknown"` で、`id` はそのページの中だけで有効な `u1`, `u2`, … です。同じページで何度登場しても同じ `id` です。
 - `texts[].speaker` は、話し手（ナレーションなら語り手）の人物の `id` です。分からなければ `null` です。
-- `discoveries` は、そのページで新しく分かったこと（`kind`: `name` / `role` / `speech_style` / `relationship` / `appearance` / `possibly_same_person` / `other`）です。`subject` はその人物の `id`、`possibly_same_person` の `content` は同じ人物かもしれない相手の `id` です。台帳への記入はしません。
+- `notes` は、キャラ台帳を整理する人（またはエージェント）への申し送り事項です。不明の人物について、名前・役割・同じ人物かもしれない、など重要なことに気づいたときだけ、自由記述で短く書かれます。人物は `u1` などの `id` で書かれます。台帳への記入はしません。
 - 座標はモデルの推定値のため、数％程度のずれが出ることがあります。
 
 ### テスト

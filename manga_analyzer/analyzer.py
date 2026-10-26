@@ -6,6 +6,7 @@ import base64
 import io
 import json
 import math
+import re
 from pathlib import Path
 from typing import Any
 
@@ -55,15 +56,15 @@ Match each person against the character ledger given with the page. Set `ledger_
 confident it is that ledger entry, and say why in `match_evidence` (a name written on the page, \
 distinctive features). If unsure, leave `ledger_id` empty: an unknown person is better than a wrong match. \
 Two persons never share a `ledger_id`. If this page reveals a name that is not in the ledger, \
-the person stays unmatched; report the name as a discovery instead.
-In `discoveries`, report what this page newly reveals about a person that the ledger does not already \
-say: a name, role, way of speaking, relationship or appearance, each with its evidence (quote the text, \
-or describe what is drawn). If two persons might be the same but you are not sure, keep them separate \
-and report kind `possibly_same_person` with the other person's ref as `content`.
+the person stays unmatched; mention the name in `notes` instead. If two persons might be the same \
+but you are not sure, keep them separate and mention it in `notes`.
+`notes` are short handover notes for whoever organizes the character ledger: if you notice something \
+important that characterizes an unknown person (a name, a role, that two persons may be the same), \
+write it briefly, just in case, referring to persons by ref (P1, ...). Leave it empty if there is nothing. \
+Do not note what happens on the page; that belongs in `summary`.
 The story so far, if given, is context only; describe what this page shows.
 
-Write `summary`, `description`, `expression`, `appearance`, `match_evidence` and discovery `content` \
-and `evidence` in {language}.
+Write `summary`, `description`, `expression`, `appearance`, `match_evidence` and `notes` in {language}.
 """
 
 
@@ -110,6 +111,9 @@ def to_pixel_bbox(box: dict[str, int], width: int, height: int, scale: float = 1
     x0, x1 = sorted((to_original(box["x_min"], width), to_original(box["x_max"], width)))
     y0, y1 = sorted((to_original(box["y_min"], height), to_original(box["y_max"], height)))
     return {"x": x0, "y": y0, "width": x1 - x0, "height": y1 - y0}
+
+
+_REF_IN_TEXT = re.compile(r"(?<![A-Za-z0-9])P\d+(?![0-9])")
 
 
 def _resolve_persons(
@@ -196,17 +200,9 @@ def build_result(
                 ],
             }
         )
-    discoveries = [
-        {
-            "subject": person_id(d["subject_ref"]),
-            "kind": d["kind"],
-            # 同一人物の候補は相手の ref が入っているので、出力の id に直す
-            "content": (
-                person_id(d["content"]) or d["content"] if d["kind"] == "possibly_same_person" else d["content"]
-            ),
-            "evidence": d["evidence"],
-        }
-        for d in model_output["discoveries"]
+    # 申し送り事項の中の P1, P2, ... を出力の id に直す（日本語に続けて書かれても拾えるよう、英数字だけで区切る）
+    notes = [
+        _REF_IN_TEXT.sub(lambda m: person_id(m.group(0)) or m.group(0), note) for note in model_output["notes"]
     ]
     return {
         "source": {"file": source, "width": width, "height": height},
@@ -218,7 +214,7 @@ def build_result(
         },
         "persons": persons,
         "panels": out_panels,
-        "discoveries": discoveries,
+        "notes": notes,
     }
 
 
