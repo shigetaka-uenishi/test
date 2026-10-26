@@ -7,7 +7,7 @@ import json
 import sys
 from pathlib import Path
 
-from .analyzer import DEFAULT_EFFORT, DEFAULT_MODEL, AnalysisError, analyze_page
+from .analyzer import DEFAULT_EFFORT, DEFAULT_MODEL, AnalysisError, build_result_from_record, request_page
 from .draw import boxes_path_for, draw_boxes
 from .ledger import load_ledger
 
@@ -20,7 +20,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("images", nargs="+", type=Path, help="解析する画像ファイル")
     parser.add_argument(
         "-o", "--out-dir", type=Path,
-        help="JSON の出力先ディレクトリ（<画像名>.json）。省略時は標準出力",
+        help="出力先ディレクトリ。<画像名>.json（最終 JSON）と <画像名>.vlm.json（VLM の作業記録）を保存する。"
+        "省略時は最終 JSON だけを標準出力に出す",
     )
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--effort", default=DEFAULT_EFFORT, choices=["low", "medium", "high", "xhigh", "max"])
@@ -46,7 +47,7 @@ def main(argv: list[str] | None = None) -> int:
     status = 0
     for image in args.images:
         try:
-            result = analyze_page(
+            record = request_page(
                 image,
                 model=args.model,
                 effort=args.effort,
@@ -58,8 +59,12 @@ def main(argv: list[str] | None = None) -> int:
             print(f"error: {e}", file=sys.stderr)
             status = 1
             continue
+        result = build_result_from_record(record)
         text = json.dumps(result, ensure_ascii=False, indent=2)
         if args.out_dir:
+            vlm_out = args.out_dir / f"{image.stem}.vlm.json"
+            vlm_out.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            print(f"wrote {vlm_out}", file=sys.stderr)
             out = args.out_dir / f"{image.stem}.json"
             out.write_text(text + "\n", encoding="utf-8")
             print(f"wrote {out}", file=sys.stderr)

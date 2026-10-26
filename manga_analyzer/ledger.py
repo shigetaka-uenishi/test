@@ -14,8 +14,8 @@ import re
 from pathlib import Path
 from typing import Any
 
-# 台帳にいない人物には、解析結果で u1, u2, ... を振るので、台帳の id には使えない
-_LOCAL_ID = re.compile(r"u\d+")
+# 台帳にいない人物には、解析結果で c1, c2, ...（VLM の仮の id）を使うので、台帳の id には使えない
+_LOCAL_ID = re.compile(r"c\d+")
 
 
 class LedgerError(ValueError):
@@ -31,7 +31,7 @@ def validate_ledger(data: Any) -> dict[str, Any]:
         if not isinstance(entry_id, str) or not entry_id:
             raise LedgerError(f"every character needs a non-empty string id: {entry!r}")
         if _LOCAL_ID.fullmatch(entry_id):
-            raise LedgerError(f"id {entry_id!r} is reserved for persons not in the ledger (u1, u2, ...)")
+            raise LedgerError(f"id {entry_id!r} is reserved for persons not in the ledger (c1, c2, ...)")
         if entry_id in seen:
             raise LedgerError(f"duplicate id: {entry_id!r}")
         seen.add(entry_id)

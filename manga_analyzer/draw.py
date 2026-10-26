@@ -48,9 +48,8 @@ def draw_boxes(result: dict[str, Any], image_path: str | Path, output_path: str 
         for character in panel["characters"]:
             cx0, cy0, cx1, cy1 = _rect(character["bbox"])
             draw.rectangle((cx0, cy0, cx1, cy1), outline=CHARACTER_COLOR, width=line)
-            # 登場の id と、どの人物か（台帳の id、または不明の u1 など）
-            label = f"{character['id']} {character['person'] or '?'}"
-            _label(draw, (cx0 + 6, cy1 - font_h - 8), label, CHARACTER_COLOR, font)
+            # 登場の id はコマ＋人物（p1-c2, p3-shigeo など）なので、どの人物かも分かる
+            _label(draw, (cx0 + 6, cy1 - font_h - 8), character["id"], CHARACTER_COLOR, font)
 
         for text in panel["texts"]:
             tx0, ty0, tx1, ty1 = _rect(text["bbox"])

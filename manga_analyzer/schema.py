@@ -5,9 +5,9 @@ API の上限（長辺 2576px・約 3.75MP）以内の画像なら縮小せず�
 ピクセルと 1:1 で座標を返す。上限を超える画像は analyzer 側で縮小して送り、
 座標を元の大きさに戻す（定規実験 #8 で、正規化より誤差が小さいことを確認済み）。
 
-人物は、モデルにはページ内の参照（P1, P2, ...）で答えさせる。台帳の人物と一致したときは
-ledger_id に台帳の id を書かせる（台帳にある id 以外は選べないよう enum で縛る）。
-出力 JSON の id（既知なら台帳の id、不明なら u1, u2, ...）への付け替えは analyzer が行う。
+VLM が付ける番号は仮のもので、欄の名前に tmp_ を付ける（人物の tmp_id は c1, c2, ...）。
+台帳の人物と一致したときは ledger_id に台帳の id を書かせる（台帳にある id 以外は選べないよう enum で縛る）。
+確定した番号（既知の人物は台帳の id、コマは p1, p2, ... など）への付け替えは analyzer が行う。
 """
 
 from __future__ import annotations
@@ -31,12 +31,12 @@ _CHARACTER = {
     "type": "object",
     "description": "One appearance of a person in this panel.",
     "properties": {
-        "person_ref": {"type": "string", "description": "The ref of the person in `persons`."},
+        "tmp_person": {"type": "string", "description": "The tmp_id of the person in `persons`."},
         "description": {"type": "string", "description": "What the person is doing in this panel."},
         "expression": {"type": "string"},
         "box": _BOX,
     },
-    "required": ["person_ref", "description", "expression", "box"],
+    "required": ["tmp_person", "description", "expression", "box"],
     "additionalProperties": False,
 }
 
@@ -47,26 +47,26 @@ _TEXT = {
     "properties": {
         "type": {"type": "string", "enum": TEXT_TYPES},
         "content": {"type": "string", "description": "Verbatim transcription in the original language."},
-        "speaker_ref": {
+        "tmp_speaker": {
             "type": "string",
-            "description": "The ref of the person who speaks or narrates it, or empty string if none/unknown.",
+            "description": "The tmp_id of the person who speaks or narrates it, or empty string if none/unknown.",
         },
         "box": _BOX,
     },
-    "required": ["type", "content", "speaker_ref", "box"],
+    "required": ["type", "content", "tmp_speaker", "box"],
     "additionalProperties": False,
 }
 
 _PANEL = {
     "type": "object",
     "properties": {
-        "reading_order": {"type": "integer"},
+        "tmp_reading_order": {"type": "integer", "description": "Position in reading order, 1 = read first."},
         "box": _BOX,
         "description": {"type": "string"},
         "characters": {"type": "array", "items": _CHARACTER},
         "texts": {"type": "array", "items": _TEXT},
     },
-    "required": ["reading_order", "box", "description", "characters", "texts"],
+    "required": ["tmp_reading_order", "box", "description", "characters", "texts"],
     "additionalProperties": False,
 }
 
@@ -75,7 +75,7 @@ def model_output_schema(ledger_ids: list[str]) -> dict[str, Any]:
     person = {
         "type": "object",
         "properties": {
-            "ref": {"type": "string", "description": "Page-local reference: P1, P2, ..."},
+            "tmp_id": {"type": "string", "description": "Temporary id for this page: c1, c2, ..."},
             "ledger_id": {
                 "type": "string",
                 "enum": ["", *ledger_ids],
@@ -87,7 +87,7 @@ def model_output_schema(ledger_ids: list[str]) -> dict[str, Any]:
                 "description": "Why this is the ledger entry. Empty string when ledger_id is empty.",
             },
         },
-        "required": ["ref", "ledger_id", "appearance", "match_evidence"],
+        "required": ["tmp_id", "ledger_id", "appearance", "match_evidence"],
         "additionalProperties": False,
     }
     return {
@@ -100,7 +100,7 @@ def model_output_schema(ledger_ids: list[str]) -> dict[str, Any]:
             "notes": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "Short handover notes about unknown persons, referring to them by ref (P1, ...).",
+                "description": "Short handover notes about unknown persons, referring to them by tmp_id (c1, ...).",
             },
         },
         "required": ["summary", "reading_direction", "persons", "panels", "notes"],

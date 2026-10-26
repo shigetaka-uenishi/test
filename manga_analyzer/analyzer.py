@@ -1,4 +1,13 @@
-"""漫画ページ画像を Claude で解析し、座標付きの JSON に変換する。"""
+"""漫画ページ画像を Claude で解析し、座標付きの JSON に変換する。
+
+解析は 2 段階に分かれている。
+
+1. request_page: 画像・台帳・あらすじを VLM に送り、答えをそのまま記録（VLM の作業記録）にする。API を呼ぶ。
+2. build_result_from_record: 作業記録から、番号を確定した最終 JSON を組み立てる。API は呼ばない。
+
+VLM が付ける番号（人物の c1、コマの読む順番など）は仮のもので、欄の名前に tmp_ を付けている。
+最終 JSON では、コードが確定した番号を id などに入れ、VLM の仮の番号も tmp_ の欄に残す。
+"""
 
 from __future__ import annotations
 
@@ -31,7 +40,7 @@ You analyze a single page of a comic (manga) and describe its layout and content
 
 For every panel on the page, report:
 - its bounding box,
-- its position in reading order (1 = read first),
+- its position in reading order (`tmp_reading_order`, 1 = read first),
 - what happens in it,
 - the characters that appear, with their bounding boxes and facial expressions,
 - every piece of text (narration boxes, speech balloons, thought balloons, sound effects),
@@ -49,9 +58,11 @@ If a text element or character overlaps two panels, assign it to the panel where
 Japanese manga is usually read right-to-left; decide the direction from the page itself.
 
 People: list every distinct person who appears, speaks or narrates on this page once in `persons`, \
-with a page-local `ref` (P1, P2, ...). Each appearance in a panel points to its person with `person_ref`; \
-when the same person appears in several panels, use the same ref. `speaker_ref` points to the person \
-who speaks or narrates a text, or is empty if unknown.
+with a temporary id `tmp_id` for this page (c1, c2, ...). Each appearance in a panel points to its \
+person with `tmp_person`; when the same person appears in several panels, use the same tmp_id. \
+If the same person is drawn more than once in one panel (clones, afterimages and the like), list each \
+drawing as a separate appearance with the same `tmp_person`, and say how it is drawn in `description`. \
+`tmp_speaker` is the tmp_id of the person who speaks or narrates a text, or empty if unknown.
 Match each person against the character ledger given with the page. Set `ledger_id` only when you are \
 confident it is that ledger entry, and say why in `match_evidence` (a name written on the page, \
 distinctive features). If unsure, leave `ledger_id` empty: an unknown person is better than a wrong match. \
@@ -60,8 +71,8 @@ the person stays unmatched; mention the name in `notes` instead. If two persons 
 but you are not sure, keep them separate and mention it in `notes`.
 `notes` are short handover notes for whoever organizes the character ledger: if you notice something \
 important that characterizes an unknown person (a name, a role, that two persons may be the same), \
-write it briefly, just in case, referring to persons by ref (P1, ...). Leave it empty if there is nothing. \
-Do not note what happens on the page; that belongs in `summary`.
+write it briefly, just in case, referring to persons by tmp_id (c1, ...). Leave it empty if there is \
+nothing. Do not note what happens on the page; that belongs in `summary`.
 The story so far, if given, is context only; describe what this page shows.
 
 Write `summary`, `description`, `expression`, `appearance`, `match_evidence` and `notes` in {language}.
@@ -113,43 +124,70 @@ def to_pixel_bbox(box: dict[str, int], width: int, height: int, scale: float = 1
     return {"x": x0, "y": y0, "width": x1 - x0, "height": y1 - y0}
 
 
-_REF_IN_TEXT = re.compile(r"(?<![A-Za-z0-9])P\d+(?![0-9])")
+# 人物の仮の id（c1, c2, ...）。申し送り事項の文中では、日本語に続けて書かれても拾えるよう英数字だけで区切る
+_TMP_ID = re.compile(r"c\d+")
+_TMP_ID_IN_TEXT = re.compile(r"(?<![A-Za-z0-9])c\d+(?![0-9])")
 
 
 def _resolve_persons(
     model_persons: list[dict[str, Any]], ledger: dict[str, Any] | None
 ) -> tuple[list[dict[str, Any]], dict[str, str]]:
-    """モデルの人物（ref 付き）を出力の人物に直し、ref → 出力 id の対応表と一緒に返す。
+    """VLM の人物（仮の id 付き）を最終の人物に直し、仮の id → 確定した id の対応表と一緒に返す。
 
-    台帳と一致した人物は台帳の id（既知）、それ以外は u1, u2, ...（不明）。
+    台帳と一致した人物は台帳の id（既知）、それ以外は VLM の仮の id をそのまま使う（不明）。
+    仮の id が c+数字の形でないか重複しているときだけ、空いている c+数字を振る。
     同じ台帳 id を指す人物が複数あれば、最初の 1 人にまとめる。
     """
     entries = {c["id"]: c for c in ledger["characters"]} if ledger else {}
+    used = {p["tmp_id"] for p in model_persons if _TMP_ID.fullmatch(p["tmp_id"])}
     persons: list[dict[str, Any]] = []
-    ref_to_id: dict[str, str] = {}
-    unknown = 0
+    tmp_to_id: dict[str, str] = {}
+    next_free = 1
     for p in model_persons:
-        ledger_id = p["ledger_id"]
+        tmp_id, ledger_id = p["tmp_id"], p["ledger_id"]
         if ledger_id in entries:
-            ref_to_id[p["ref"]] = ledger_id
+            tmp_to_id.setdefault(tmp_id, ledger_id)
             if any(q["id"] == ledger_id for q in persons):
                 continue
-            persons.append(
-                {
-                    "id": ledger_id,
-                    "status": "known",
-                    "name": entries[ledger_id].get("name"),
-                    "appearance": p["appearance"],
-                    "match_evidence": p["match_evidence"] or None,
-                }
-            )
+            person_id, status, name = ledger_id, "known", entries[ledger_id].get("name")
         else:
-            unknown += 1
-            ref_to_id[p["ref"]] = f"u{unknown}"
-            persons.append(
-                {"id": f"u{unknown}", "status": "unknown", "name": None, "appearance": p["appearance"], "match_evidence": None}
-            )
-    return persons, ref_to_id
+            person_id = tmp_id
+            if not _TMP_ID.fullmatch(tmp_id) or any(q["id"] == tmp_id for q in persons):
+                while f"c{next_free}" in used:
+                    next_free += 1
+                person_id = f"c{next_free}"
+                used.add(person_id)
+            tmp_to_id.setdefault(tmp_id, person_id)
+            status, name = "unknown", None
+        persons.append(
+            {
+                "id": person_id,
+                "tmp_id": tmp_id,
+                "status": status,
+                "name": name,
+                "appearance": p["appearance"],
+                "match_evidence": p["match_evidence"] or None,
+            }
+        )
+    return persons, tmp_to_id
+
+
+def _appearance_ids(panel_id: str, person_ids: list[str | None]) -> list[str]:
+    """登場の id: コマの id ＋ 人物の id（例: p1-c2, p3-shigeo）。
+
+    同じコマに同じ人物が複数回描かれていたら、その人物の登場すべてに -1, -2, ... を付ける。
+    """
+    keys = [pid or "none" for pid in person_ids]
+    counts = {k: keys.count(k) for k in keys}
+    seen: dict[str, int] = {}
+    ids = []
+    for k in keys:
+        if counts[k] == 1:
+            ids.append(f"{panel_id}-{k}")
+        else:
+            seen[k] = seen.get(k, 0) + 1
+            ids.append(f"{panel_id}-{k}-{seen[k]}")
+    return ids
 
 
 def build_result(
@@ -162,47 +200,52 @@ def build_result(
     scale: float = 1.0,
     ledger: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """モデル出力（送った画像のピクセル座標・ページ内の人物参照）を、最終 JSON に組み立てる。"""
-    persons, ref_to_id = _resolve_persons(model_output["persons"], ledger)
+    """VLM の答え（送った画像のピクセル座標・仮の番号）から、番号を確定した最終 JSON を組み立てる。"""
+    persons, tmp_to_id = _resolve_persons(model_output["persons"], ledger)
 
-    def person_id(ref: str) -> str | None:
-        return ref_to_id.get(ref)
+    def person_id(tmp: str) -> str | None:
+        return tmp_to_id.get(tmp)
 
-    panels = sorted(model_output["panels"], key=lambda p: p["reading_order"])
+    panels = sorted(model_output["panels"], key=lambda p: p["tmp_reading_order"])
     out_panels = []
     for i, panel in enumerate(panels, start=1):
         panel_id = f"p{i}"
+        appearances = panel["characters"]
+        ids = _appearance_ids(panel_id, [person_id(c["tmp_person"]) for c in appearances])
         out_panels.append(
             {
                 "id": panel_id,
                 "reading_order": i,
+                "tmp_reading_order": panel["tmp_reading_order"],
                 "bbox": to_pixel_bbox(panel["box"], width, height, scale),
                 "description": panel["description"],
                 "characters": [
                     {
-                        "id": f"{panel_id}-c{k}",
-                        "person": person_id(c["person_ref"]),
+                        "id": appearance_id,
+                        "person": person_id(c["tmp_person"]),
+                        "tmp_person": c["tmp_person"],
                         "description": c["description"],
                         "expression": c["expression"],
                         "bbox": to_pixel_bbox(c["box"], width, height, scale),
                     }
-                    for k, c in enumerate(panel["characters"], start=1)
+                    for appearance_id, c in zip(ids, appearances)
                 ],
                 "texts": [
                     {
                         "id": f"{panel_id}-t{j}",
                         "type": t["type"],
                         "content": t["content"],
-                        "speaker": person_id(t["speaker_ref"]),
+                        "speaker": person_id(t["tmp_speaker"]),
+                        "tmp_speaker": t["tmp_speaker"],
                         "bbox": to_pixel_bbox(t["box"], width, height, scale),
                     }
                     for j, t in enumerate(panel["texts"], start=1)
                 ],
             }
         )
-    # 申し送り事項の中の P1, P2, ... を出力の id に直す（日本語に続けて書かれても拾えるよう、英数字だけで区切る）
+    # 申し送り事項の中の仮の id（c1 など）を、確定した id に直す
     notes = [
-        _REF_IN_TEXT.sub(lambda m: person_id(m.group(0)) or m.group(0), note) for note in model_output["notes"]
+        _TMP_ID_IN_TEXT.sub(lambda m: person_id(m.group(0)) or m.group(0), note) for note in model_output["notes"]
     ]
     return {
         "source": {"file": source, "width": width, "height": height},
@@ -218,6 +261,20 @@ def build_result(
     }
 
 
+def build_result_from_record(record: dict[str, Any]) -> dict[str, Any]:
+    """VLM の作業記録（request_page の戻り値）から最終 JSON を組み立てる。API は呼ばない。"""
+    src = record["source"]
+    return build_result(
+        record["output"],
+        source=src["file"],
+        width=src["width"],
+        height=src["height"],
+        model=record["model"],
+        scale=src["width"] / src["sent_width"],
+        ledger=record["ledger"],
+    )
+
+
 def _context_blocks(ledger: dict[str, Any] | None, synopsis: str | None) -> list[dict[str, Any]]:
     # 台帳（作品全体でほぼ固定）→ あらすじ（ページごとに変わる）の順に置く
     ledger_text = json.dumps(ledger, ensure_ascii=False, indent=2) if ledger and ledger["characters"] else "(empty)"
@@ -227,7 +284,7 @@ def _context_blocks(ledger: dict[str, Any] | None, synopsis: str | None) -> list
     return blocks
 
 
-def analyze_page(
+def request_page(
     image_path: str | Path,
     *,
     client: Any = None,
@@ -237,7 +294,11 @@ def analyze_page(
     ledger: dict[str, Any] | None = None,
     synopsis: str | None = None,
 ) -> dict[str, Any]:
-    """画像 1 枚を、キャラ台帳とあらすじを踏まえて解析し、座標と内容の解釈をまとめた dict を返す。"""
+    """画像 1 枚を VLM に送り、答えをそのまま VLM の作業記録として返す（加工しない）。
+
+    作業記録には、答え（output）のほか、使ったモデル・渡した台帳とあらすじ・画像の大きさを残す。
+    build_result_from_record に渡せば、API を呼ばずに最終 JSON を何度でも作り直せる。
+    """
     path = Path(image_path)
     if ledger is not None:
         validate_ledger(ledger)
@@ -283,12 +344,17 @@ def analyze_page(
     if text is None:
         raise AnalysisError(f"no text output for {path} (stop_reason: {response.stop_reason})")
 
-    return build_result(
-        json.loads(text),
-        source=path.as_posix(),
-        width=width,
-        height=height,
-        model=response.model,
-        scale=width / sent_w,
-        ledger=ledger,
-    )
+    return {
+        "source": {"file": path.as_posix(), "width": width, "height": height, "sent_width": sent_w, "sent_height": sent_h},
+        "model": response.model,
+        "effort": effort,
+        "language": language,
+        "ledger": ledger,
+        "synopsis": synopsis,
+        "output": json.loads(text),
+    }
+
+
+def analyze_page(image_path: str | Path, **kwargs: Any) -> dict[str, Any]:
+    """画像 1 枚を、キャラ台帳とあらすじを踏まえて解析し、最終 JSON を返す（作業記録は返さない）。"""
+    return build_result_from_record(request_page(image_path, **kwargs))
