@@ -26,24 +26,68 @@ export ANTHROPIC_API_KEY=...   # Claude API キー
 ### 使い方
 
 ```bash
-# 標準出力に JSON を出す
+# 標準出力に最終 JSON を出す
 python -m manga_analyzer tests/fixtures/manga_page_01.jpg
 
-# 複数枚をまとめて解析し、out/<画像名>.json に保存
+# 複数枚をまとめて解析し、out/ に保存（最終 JSON と VLM の作業記録の 2 つ）
 python -m manga_analyzer tests/fixtures/*.jpg -o out/
 
 # 枠を元画像に描いた確認用画像（out/<画像名>_boxes.png）も出す
 python -m manga_analyzer tests/fixtures/*.jpg -o out/ --draw
 
-# 解析済みの JSON から確認用画像だけ作り直す（API は呼ばない）
-python -m manga_analyzer.draw out/*.json
+# キャラ台帳と、前のページまでのあらすじを踏まえて解析する
+python -m manga_analyzer tests/fixtures/manga_page_02.jpg -o out/ --ledger tests/fixtures/ledger_shigeo.json --synopsis synopsis.txt
+
+# VLM の作業記録から、最終 JSON だけ作り直す（API は呼ばない）
+python -m manga_analyzer.rebuild out/*.vlm.json
+
+# 最終 JSON から、確認用画像だけ作り直す（API は呼ばない）
+python -m manga_analyzer.draw out/manga_page_01.json
 ```
 
-確認用画像の枠の色: コマ＝赤、登場人物＝青、テキスト＝緑。ラベルの ID（`p1`, `p1-c1`, `p1-t1` など）は JSON の `id` と対応しています。
+`-o` を付けると、1 枚の画像につき 2 つのファイルができます。
 
-主なオプション: `--model`（既定 `claude-opus-5-5`）、`--effort`（既定 `high`）、`--language`（説明文の言語、既定 `Japanese`）。
+| ファイル | 中身 |
+|---|---|
+| `<画像名>.vlm.json` | **VLM の作業記録**。VLM の答え（`output`）を一切加工せずに保存し、使ったモデル・渡した台帳とあらすじ・画像の大きさも残す |
+| `<画像名>.json` | **最終 JSON**。作業記録から、番号を確定して整えたもの |
 
-### 出力 JSON
+確認用画像の枠の色: コマ＝赤、登場人物＝青、テキスト＝緑。ラベルの ID（`p1`, `p1-shigeo`, `p1-t1` など）は最終 JSON の `id` と対応しています。
+
+主なオプション: `--model`（既定 `claude-opus-5-5`）、`--effort`（既定 `high`）、`--language`（説明文の言語、既定 `Japanese`）、`--ledger`（キャラ台帳の JSON。省略時は空の台帳）、`--synopsis`（前のページまでのあらすじのテキストファイル）。
+
+### 番号の読み方
+
+**`tmp` と書いてあれば、VLM が付けた仮の番号です。使うのは `tmp` のないほうです。**
+
+最終 JSON では、コードが確定した番号の隣に、VLM の仮の番号も残しています（「VLM は何番と言ったか」を追えるようにするため）。
+
+| 対象 | 確定した番号（コード） | VLM の仮の番号 |
+|---|---|---|
+| コマ | `id`: `p1`, `p2`, …（読む順）／`reading_order`: 1, 2, … | `tmp_reading_order` |
+| 人物 | `id`: 既知なら台帳の `id`（`shigeo`）、不明なら仮の番号のまま（`c2`） | `tmp_id`: `c1`, `c2`, … |
+| 人物の登場 | `id`: コマ＋人物（`p1-shigeo`, `p2-c2`）／`person` | `tmp_person` |
+| テキスト | `id`: `p1-t1`, `p1-t2`, …／`speaker` | `tmp_speaker` |
+
+- 頭文字は、`p` ＝ コマ（panel）、`t` ＝ テキスト、`c` ＝ キャラ です。
+- 同じコマに同じ人物が複数回描かれている（分身・残像など）ときは、その人物の登場すべてに `-1`, `-2`, … が付きます（例: `p1-shigeo-1`, `p1-shigeo-2`）。
+
+### キャラ台帳
+
+作品をまたいで持つ人物の一覧です。今は人が手で書きます（解析結果から台帳への記入は、まだ作っていません。#21）。
+
+```json
+{
+  "characters": [
+    {"id": "shigeo", "name": "シゲオ", "role": "主人公・語り手", "appearance": "黒髪の短髪、眼鏡、口ひげとあごひげ…"}
+  ]
+}
+```
+
+- `id` だけ必須です。`name`・`role`・`appearance` は省略できます（名前のない人物も載せられます）。
+- `id` は、確認用画像のラベルに描けるよう英数字にしてください。`c1`, `c2`, … は台帳にいない人物用なので使えません。
+
+### 最終 JSON
 
 ```json
 {
@@ -51,25 +95,36 @@ python -m manga_analyzer.draw out/*.json
   "model": "claude-opus-5-5",
   "coordinate_system": "pixels, origin top-left, bbox = {x, y, width, height}",
   "page": {"summary": "…", "reading_direction": "right_to_left"},
+  "persons": [
+    {"id": "shigeo", "tmp_id": "c1", "status": "known", "name": "シゲオ", "appearance": "…", "match_evidence": "…"},
+    {"id": "c2", "tmp_id": "c2", "status": "unknown", "name": null, "appearance": "…", "match_evidence": null}
+  ],
   "panels": [
     {
       "id": "p1",
       "reading_order": 1,
+      "tmp_reading_order": 1,
       "bbox": {"x": 128, "y": 126, "width": 1163, "height": 812},
       "description": "…",
       "characters": [
-        {"name": "シゲオ", "description": "…", "expression": "笑顔", "bbox": {"x": 0, "y": 0, "width": 0, "height": 0}}
+        {"id": "p1-shigeo", "person": "shigeo", "tmp_person": "c1", "description": "…", "expression": "笑顔", "bbox": {"x": 0, "y": 0, "width": 0, "height": 0}}
       ],
       "texts": [
-        {"id": "p1-t1", "type": "narration", "content": "俺は シゲオ\n日本人だ", "speaker": null, "bbox": {"x": 0, "y": 0, "width": 0, "height": 0}}
+        {"id": "p1-t1", "type": "narration", "content": "俺は シゲオ\n日本人だ", "speaker": "shigeo", "tmp_speaker": "c1", "bbox": {"x": 0, "y": 0, "width": 0, "height": 0}}
       ]
     }
-  ]
+  ],
+  "notes": ["c2 は宿のフロントの女性"]
 }
 ```
 
 - 座標は元画像のピクセル単位（左上が原点）です。
 - `texts[].type` は `narration` / `speech` / `thought` / `sound_effect` / `other` のいずれかです。
+- `persons` はページに出てくる人物そのもの、`panels[].characters` はコマへの登場（枠 1 つ）です。登場は `person` で人物を指します。
+  - 台帳の人物と一致したら `status: "known"` で、`id` は台帳の `id` です。
+  - 台帳にいない人物は `status: "unknown"` で、`id` は VLM の仮の番号（`c2` など）のままです。そのページの中だけで有効で、同じページで何度登場しても同じです。
+- `texts[].speaker` は、話し手（ナレーションなら語り手）の人物の `id` です。分からなければ `null` です。
+- `notes` は、キャラ台帳を整理する人（またはエージェント）への申し送り事項です。不明の人物について、名前・役割・同じ人物かもしれない、など重要なことに気づいたときだけ、自由記述で短く書かれます。人物は確定した `id` で書かれます。台帳への記入はしません。
 - 座標はモデルの推定値のため、数％程度のずれが出ることがあります。
 
 ### テスト

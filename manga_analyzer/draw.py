@@ -45,10 +45,11 @@ def draw_boxes(result: dict[str, Any], image_path: str | Path, output_path: str 
         draw.rectangle((x0, y0, x1, y1), outline=PANEL_COLOR, width=line * 2)
         _label(draw, (x0 + 6, y0 + 6), f"{panel['id']} (#{panel['reading_order']})", PANEL_COLOR, font)
 
-        for i, character in enumerate(panel["characters"], start=1):
+        for character in panel["characters"]:
             cx0, cy0, cx1, cy1 = _rect(character["bbox"])
             draw.rectangle((cx0, cy0, cx1, cy1), outline=CHARACTER_COLOR, width=line)
-            _label(draw, (cx0 + 6, cy1 - font_h - 8), f"{panel['id']}-c{i}", CHARACTER_COLOR, font)
+            # 登場の id はコマ＋人物（p1-c2, p3-shigeo など）なので、どの人物かも分かる
+            _label(draw, (cx0 + 6, cy1 - font_h - 8), character["id"], CHARACTER_COLOR, font)
 
         for text in panel["texts"]:
             tx0, ty0, tx1, ty1 = _rect(text["bbox"])
