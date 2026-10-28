@@ -1,10 +1,11 @@
 """キャラ台帳（作品をまたいで持つ人物の一覧）の読み込み。
 
-台帳は人が手で書く JSON（台帳への記入は #21 でスコープ外）:
+台帳は人が手で書くか、sheet.py が解析結果の新しい人物を追記する JSON:
 
     {"characters": [{"id": "shigeo", "name": "シゲオ", "role": "主人公・語り手", "appearance": "…"}]}
 
 id だけ必須。name・role・appearance は任意（名前のない人物も載せられるように）。
+ほかの欄（sheet.py が書く根拠の欄など）があってもよいが、VLM には PROFILE_FIELDS だけを渡す。
 """
 
 from __future__ import annotations
@@ -40,6 +41,19 @@ def validate_ledger(data: Any) -> dict[str, Any]:
 
 def load_ledger(path: str | Path) -> dict[str, Any]:
     return validate_ledger(json.loads(Path(path).read_text(encoding="utf-8")))
+
+
+# 解析時に VLM に渡す欄（人物の特徴）。キャラシートの根拠の欄（登場・座標・画像のパスなど）は渡さない
+PROFILE_FIELDS = ("id", "name", "role", "appearance")
+
+
+def profiles(ledger: dict[str, Any]) -> dict[str, Any]:
+    """台帳から、VLM に渡す欄だけを残したもの（値が null の欄は省く）。"""
+    return {
+        "characters": [
+            {k: c[k] for k in PROFILE_FIELDS if c.get(k) is not None} for c in ledger["characters"]
+        ]
+    }
 
 
 def ledger_ids(ledger: dict[str, Any] | None) -> list[str]:

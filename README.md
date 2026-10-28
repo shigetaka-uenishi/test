@@ -44,8 +44,8 @@ python -m manga_analyzer.rebuild out/*.vlm.json
 # 最終 JSON から、確認用画像だけ作り直す（API は呼ばない）
 python -m manga_analyzer.draw out/manga_page_01.json
 
-# 最終 JSON の不明の人物から、キャラシートと切り出し画像を作る（API は呼ばない）
-python -m manga_analyzer.sheet out/manga_page_01.json -o sheets/ --ledger tests/fixtures/ledger_shigeo.json
+# 最終 JSON の新しい人物をキャラシートにまとめ、キャラ台帳に追記する（API は呼ばない）
+python -m manga_analyzer.sheet out/manga_page_01.json --ledger ledger.json
 ```
 
 `-o` を付けると、1 枚の画像につき 2 つのファイルができます。
@@ -77,7 +77,7 @@ python -m manga_analyzer.sheet out/manga_page_01.json -o sheets/ --ledger tests/
 
 ### キャラ台帳
 
-作品をまたいで持つ人物の一覧です。今は人が手で書きます（解析結果から台帳への記入は、まだ作っていません。#21）。
+作品をまたいで持つ人物の一覧です。人が手で書くほか、解析結果の新しい人物を `manga_analyzer.sheet` で追記できます（下の「キャラシート」）。
 
 ```json
 {
@@ -130,36 +130,48 @@ python -m manga_analyzer.sheet out/manga_page_01.json -o sheets/ --ledger tests/
 - `notes` は、キャラ台帳を整理する人（またはエージェント）への申し送り事項です。不明の人物について、名前・役割・同じ人物かもしれない、など重要なことに気づいたときだけ、自由記述で短く書かれます。人物は確定した `id` で書かれます。台帳への記入はしません。
 - 座標はモデルの推定値のため、数％程度のずれが出ることがあります。
 
-### キャラシート
+### キャラシート（台帳への追記）
 
-最終 JSON で `status: "unknown"` の人物（台帳にいない＝新しく見つかった人物）ごとに、キャラシートと、その人物を元画像から切り出した画像を作ります（#24）。台帳に載せて次のページを解析すれば、同じ人物を「既知」と判定できるようにするためです。
+最終 JSON で `status: "unknown"` の人物（台帳にいない＝新しく登場した人物）を、1 人 1 枚のキャラシートにまとめて、キャラ台帳に追記します（#24）。台帳がキャラシートのデータベースで、追記した台帳を次のページの解析に `--ledger` で渡すと、同じ人物を「既知」と判定できるようになります。
 
-| ファイル | 中身 |
-|---|---|
-| `sheets/<id>.json` | キャラシート |
-| `sheets/<id>/<登場の id>.png` | 登場（`panels[].characters[]`）の枠で切り出した画像 |
+```
+ページ N を解析 → 最終 JSON → sheet で台帳に追記 → ページ N+1 を解析（--ledger 台帳）→ …
+```
+
+Python からは `manga_analyzer.sheet.add_new_characters(最終 JSON の dict, 台帳のパス)` で呼べます（追記したシートを返します）。
 
 ```json
 {
-  "id": "unk-001",
-  "name": null,
-  "role": null,
-  "appearance": "しま模様の服の巻き毛の男性",
-  "source": {"result": "out/manga_page_01.json", "image": "tests/fixtures/manga_page_01.jpg", "person": "c2"},
-  "appearances": [
-    {"id": "p2-c2", "panel": "p2", "description": "…", "expression": "笑顔", "bbox": {"x": 400, "y": 980, "width": 300, "height": 420}, "image": "unk-001/p2-c2.png"}
-  ],
-  "lines": [{"id": "p2-t1", "type": "speech", "content": "…"}],
-  "notes": ["unk-001の名前はカルロスらしい（shigeoが呼んでいる）"],
-  "image": "unk-001/p2-c2.png"
+  "characters": [
+    {"id": "shigeo", "name": "シゲオ", "role": "主人公・語り手", "appearance": "…"},
+    {
+      "id": "unk-001",
+      "name": null,
+      "role": null,
+      "appearance": "しま模様の服の巻き毛の男性",
+      "image": "images/unk-001/p2-c2.png",
+      "source": {"result": "out/manga_page_01.json", "image": "tests/fixtures/manga_page_01.jpg", "person": "c2"},
+      "appearances": [
+        {"id": "p2-c2", "panel": "p2", "description": "…", "expression": "笑顔", "bbox": {"x": 400, "y": 980, "width": 300, "height": 420}, "image": "images/unk-001/p2-c2.png"}
+      ],
+      "lines": [{"id": "p2-t1", "type": "speech", "content": "…"}],
+      "notes": ["unk-001の名前はカルロスらしい（shigeoが呼んでいる）"]
+    }
+  ]
 }
 ```
 
-- 先頭の `id`・`name`・`role`・`appearance` は台帳の 1 人分と同じ形で、そのまま台帳に貼れます。台帳への記入は自動ではしません（#21）。
-- `id` は `unk-001`, `unk-002`, … で、`--ledger` の台帳と出力先にあるシートの `id` とは重ならない番号を振ります。
-- `name`・`role` はコードでは決められないので `null` です。`notes`（その人物に触れた申し送り事項）や `lines`（その人物が話し手のテキスト）を見て、人が埋めます。
-- `image` は代表の画像で、いちばん大きく写っている登場です。画像のパスは出力先からの相対パスです。
-- 同じページの同じ人物は、作り直しても同じ `id` のシートに上書きされます。別のページの同じ人物は別のシートになります（まとめ直しは #21）。
+- 台帳がなければ新しく作ります。手で書いた人物はそのまま残します。
+- `id` は `unk-001`, `unk-002`, … で、台帳の `id` とは重ならない番号を振ります。
+- 解析時に VLM に渡すのは、`id`・`name`・`role`・`appearance` のうち値のある欄だけです。残りは根拠の欄です。
+  - `source`: どのページのどの人物（仮の番号）から作ったか
+  - `appearances`: 登場ごとの説明・表情・枠・切り出し画像
+  - `lines`: その人物が話し手のテキスト（口調の手がかり）
+  - `notes`: その人物に触れた申し送り事項（仮の番号はシートの `id` に置き換え済み）
+  - `image`: 代表の画像（いちばん大きく写っている登場）
+- 切り出し画像は、台帳と同じディレクトリの `images/<id>/<登場の id>.png` に保存します（`--images-dir` で変更可）。パスは台帳のあるディレクトリからの相対パスです。
+- `name`・`role` はコードでは決められないので `null` です。`notes` や `lines` を見て、人が埋めます。
+- 同じページの同じ人物は、2 度追記しません。別のページに出た同じ人物は、別のシートになります（まとめ直しは #21）。
 
 ### テスト
 
@@ -176,7 +188,7 @@ pytest
 ├── README.md         # このファイル
 ├── CLAUDE.md         # 開発ルール
 ├── pyproject.toml
-├── manga_analyzer/   # 漫画ページ解析（draw.py: 確認用画像、sheet.py: キャラシート）
+├── manga_analyzer/   # 漫画ページ解析（draw.py: 確認用画像、sheet.py: キャラシート・台帳への追記）
 └── tests/
     ├── test_analyzer.py
     ├── test_sheet.py
