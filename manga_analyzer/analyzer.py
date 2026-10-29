@@ -21,7 +21,7 @@ from typing import Any
 
 from PIL import Image
 
-from .ledger import ledger_ids, validate_ledger
+from .ledger import ledger_ids, profiles, validate_ledger
 from .schema import model_output_schema
 
 DEFAULT_MODEL = "claude-opus-5-5"
@@ -277,7 +277,9 @@ def build_result_from_record(record: dict[str, Any]) -> dict[str, Any]:
 
 def _context_blocks(ledger: dict[str, Any] | None, synopsis: str | None) -> list[dict[str, Any]]:
     # 台帳（作品全体でほぼ固定）→ あらすじ（ページごとに変わる）の順に置く
-    ledger_text = json.dumps(ledger, ensure_ascii=False, indent=2) if ledger and ledger["characters"] else "(empty)"
+    ledger_text = (
+        json.dumps(profiles(ledger), ensure_ascii=False, indent=2) if ledger and ledger["characters"] else "(empty)"
+    )
     blocks = [{"type": "text", "text": f"Character ledger:\n{ledger_text}"}]
     if synopsis and synopsis.strip():
         blocks.append({"type": "text", "text": f"Story so far:\n{synopsis.strip()}"})
