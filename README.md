@@ -16,6 +16,8 @@
 漫画ページの画像を Claude で解析し、コマ・登場人物・セリフなどの
 **座標**と**内容の解釈**を JSON で出力します。
 
+部品の役割とデータの流れは、設計図 [docs/architecture.md](docs/architecture.md) にまとめています。
+
 ### セットアップ
 
 ```bash
@@ -188,6 +190,8 @@ pytest
 ├── README.md         # このファイル
 ├── CLAUDE.md         # 開発ルール
 ├── pyproject.toml
+├── docs/
+│   └── architecture.md  # 設計図（部品とデータの流れ）
 ├── manga_analyzer/   # 漫画ページ解析（draw.py: 確認用画像、sheet.py: キャラシート・台帳への追記）
 └── tests/
     ├── test_analyzer.py
